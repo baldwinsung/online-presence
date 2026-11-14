@@ -2,6 +2,9 @@
 
 Go REST API to look up the online presence of a domain — WHOIS registration, hosting provider, and SSL certificate details — all via HTTP PUT endpoints. (A Flask app until 2026-10-23; same routes and JSON.)
 
+> **Not deployed (2026-11-14).** Retired from the VPS fleet; `op.baldwinsung.com` no longer exists. Run it locally (below). `deploy/k8s/vps/` is kept for reference only.
+
+
 ## Getting Started
 
 ### Local

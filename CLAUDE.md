@@ -2,6 +2,9 @@
 
 Go REST API (Flask until 2026-10-23) that exposes domain WHOIS info, hosting provider lookup, and SSL certificate details via HTTP PUT endpoints.
 
+> **Not deployed (2026-11-14).** Retired from the VPS fleet; `op.baldwinsung.com` no longer exists. Run it locally (below). `deploy/k8s/vps/` is kept for reference only.
+
+
 ## Commands
 
 ### Run locally
