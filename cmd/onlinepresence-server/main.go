@@ -35,8 +35,10 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "serve-mcp":
+			log.Fatal(runServeMCP())
 		default:
-			log.Fatalf("unknown command %q (\"serve\" or \"mcp\")", os.Args[1])
+			log.Fatalf("unknown command %q (\"serve\", \"mcp\" or \"serve-mcp\")", os.Args[1])
 		}
 	}
 
@@ -66,6 +68,9 @@ const lookupTimeout = 15 * time.Second
 
 func liveLookups() lookups {
 	whoisClient := whois.NewClient().SetTimeout(lookupTimeout)
+	if egressControl != nil { // MCP_PUBLIC=1: port-43 WHOIS gets the address guard too
+		whoisClient.SetDialer(&net.Dialer{Timeout: lookupTimeout, Control: egressControl})
+	}
 	return lookups{
 		// RDAP first (HTTPS, works behind a proxy), port-43 WHOIS if RDAP
 		// has no answer. Both errors are reported if both fail.

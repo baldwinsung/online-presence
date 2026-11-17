@@ -33,6 +33,26 @@ claude mcp add --scope user onlinepresence -- /path/to/onlinepresence-server mcp
 
 Tools: `domain_registration`, `hosting_provider`, `ssl_certificate`, `online_presence` (all three in one call), `my_public_ip`. Works behind an HTTP proxy (`HTTPS_PROXY`): registration data comes from RDAP over HTTPS, with port-43 WHOIS as a fallback, and the certificate fetch tunnels with `CONNECT`.
 
+### Remote (Streamable HTTP)
+
+`onlinepresence-server serve-mcp` serves the same tools over MCP's Streamable HTTP transport, meant to sit behind a reverse proxy that terminates TLS and handles auth and rate limits:
+
+```bash
+MCP_LISTEN_ADDR=127.0.0.1:8090 MCP_PUBLIC=1 onlinepresence-server serve-mcp
+claude mcp add --transport http onlinepresence https://your-proxy.example/   # once proxied
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MCP_LISTEN_ADDR` | `127.0.0.1:8090` | Listen address. Keep it on loopback behind the proxy. |
+| `MCP_PUBLIC` | off | `1` = internet-facing: drops `my_public_ip`, and refuses outbound connections to private, loopback, link-local and other reserved addresses (so a domain whose A record is `10.0.0.1` or `127.0.0.1` can't make the server probe its own network). Needs direct egress: a proxy on a private IP is refused too. |
+| `MCP_ALLOWED_ORIGINS` | none | Comma-separated `Origin` values to accept. Requests carrying any other `Origin` get 403; requests with no `Origin` (non-browser clients) are accepted. |
+
+Behaviour:
+- `POST /` only, one `application/json` response per request; no SSE stream, so `GET`/`DELETE` get 405. Stateless (no `Mcp-Session-Id`). `GET /healthz` for probes.
+- Notifications and client responses get `202 Accepted`. JSON-RPC batches are refused, bodies are capped at 64 KiB, and an unsupported `MCP-Protocol-Version` header gets 400.
+- Successful results are cached for 10 minutes per tool and arguments; errors aren't cached. At most 8 lookups run at once; a call that can't start within 5 s gets a "server busy" tool error.
+
 ## API Reference
 
 All endpoints use `PUT`. Replace `<domain>` with a domain name (e.g. `google.com`).

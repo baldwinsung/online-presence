@@ -242,13 +242,147 @@ func myPublicIP(ctx context.Context) (any, error) {
 	return map[string]any{"ip": strings.TrimSpace(string(b)), "source": myIPURL}, nil
 }
 
+// mcpOptions shape one server instance. The zero value is the local stdio
+// server: every tool, no cache, no concurrency cap.
+type mcpOptions struct {
+	// public drops my_public_ip (it reports the server's own egress IP,
+	// meaningless to a remote caller) for a server exposed to the internet.
+	public bool
+	// cacheTTL > 0 caches each tool result per (tool, arguments) for that long.
+	cacheTTL time.Duration
+	// maxCalls > 0 caps concurrent tools/call; a call that can't get a slot
+	// within callWait gets a "busy" tool error instead of queueing forever.
+	maxCalls int
+	callWait time.Duration
+}
+
+type mcpServer struct {
+	tools  []mcpTool
+	byName map[string]mcpTool
+	opts   mcpOptions
+	cache  *resultCache
+	slots  chan struct{}
+}
+
+func newMCPServer(l lookups, o mcpOptions) *mcpServer {
+	s := &mcpServer{byName: map[string]mcpTool{}, opts: o}
+	for _, t := range mcpTools(l) {
+		if o.public && t.Name == "my_public_ip" {
+			continue
+		}
+		s.tools = append(s.tools, t)
+		s.byName[t.Name] = t
+	}
+	if o.cacheTTL > 0 {
+		s.cache = newResultCache(o.cacheTTL, 2000)
+	}
+	if o.maxCalls > 0 {
+		s.slots = make(chan struct{}, o.maxCalls)
+	}
+	return s
+}
+
+func (s *mcpServer) instructions() string {
+	text := "Live lookups about public domains: registration (RDAP/WHOIS), hosting provider (IP RDAP), TLS certificate"
+	if _, ok := s.byName["my_public_ip"]; ok {
+		return text + ", plus this host's public egress IP."
+	}
+	return text + "."
+}
+
+// handle answers one JSON-RPC message. ok is false for notifications and
+// client responses, which get no reply.
+func (s *mcpServer) handle(ctx context.Context, m rpcMsg) (resp rpcResp, ok bool) {
+	if len(m.ID) == 0 || m.Method == "" { // notification (initialized, cancelled, ...) or a response
+		return rpcResp{}, false
+	}
+	resp = rpcResp{JSONRPC: "2.0", ID: m.ID}
+	switch m.Method {
+	case "initialize":
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		json.Unmarshal(m.Params, &p)
+		v := mcpLatestProtocol
+		if mcpProtocols[p.ProtocolVersion] {
+			v = p.ProtocolVersion
+		}
+		resp.Result = map[string]any{
+			"protocolVersion": v,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "onlinepresence", "version": "1.1.0"},
+			"instructions":    s.instructions(),
+		}
+	case "ping":
+		resp.Result = map[string]any{}
+	case "tools/list":
+		resp.Result = map[string]any{"tools": s.tools}
+	case "tools/call":
+		var p struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			resp.Error = &rpcError{-32602, "invalid params"}
+			break
+		}
+		t, found := s.byName[p.Name]
+		if !found {
+			resp.Error = &rpcError{-32602, "unknown tool: " + p.Name}
+			break
+		}
+		resp.Result = s.call(ctx, t, p.Arguments)
+	default:
+		resp.Error = &rpcError{-32601, "method not found: " + m.Method}
+	}
+	return resp, true
+}
+
+func (s *mcpServer) call(ctx context.Context, t mcpTool, args map[string]any) map[string]any {
+	key := ""
+	if s.cache != nil {
+		b, _ := json.Marshal(args) // map keys marshal sorted, so equal args give equal keys
+		key = t.Name + "\x00" + string(b)
+		if v, hit := s.cache.get(key); hit {
+			return v
+		}
+	}
+	if s.slots != nil {
+		wait := s.opts.callWait
+		if wait <= 0 {
+			wait = 5 * time.Second
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case s.slots <- struct{}{}:
+			timer.Stop()
+			defer func() { <-s.slots }()
+		case <-timer.C:
+			return toolResult(map[string]string{"error": "server busy, try again shortly"}, true)
+		case <-ctx.Done():
+			timer.Stop()
+			return toolResult(map[string]string{"error": ctx.Err().Error()}, true)
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*lookupTimeout)
+	defer cancel()
+	start := time.Now()
+	v, err := t.run(ctx, args)
+	if err != nil {
+		log.Printf("%s: %v (%s)", t.Name, err, time.Since(start).Round(time.Millisecond))
+		// Errors aren't cached: most are transient (timeouts, rate limits).
+		return toolResult(map[string]string{"error": err.Error()}, true)
+	}
+	out := toolResult(v, false)
+	if s.cache != nil {
+		s.cache.put(key, out)
+	}
+	return out
+}
+
 // serveMCP runs the stdio loop until in closes.
 func serveMCP(in io.Reader, out io.Writer, l lookups) error {
-	tools := mcpTools(l)
-	byName := map[string]mcpTool{}
-	for _, t := range tools {
-		byName[t.Name] = t
-	}
+	s := newMCPServer(l, mcpOptions{})
 	enc := json.NewEncoder(out)
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -262,55 +396,9 @@ func serveMCP(in io.Reader, out io.Writer, l lookups) error {
 			enc.Encode(rpcResp{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32700, "parse error"}})
 			continue
 		}
-		if len(m.ID) == 0 { // notification (initialized, cancelled, ...)
+		resp, ok := s.handle(context.Background(), m)
+		if !ok {
 			continue
-		}
-		resp := rpcResp{JSONRPC: "2.0", ID: m.ID}
-		switch m.Method {
-		case "initialize":
-			var p struct {
-				ProtocolVersion string `json:"protocolVersion"`
-			}
-			json.Unmarshal(m.Params, &p)
-			v := mcpLatestProtocol
-			if mcpProtocols[p.ProtocolVersion] {
-				v = p.ProtocolVersion
-			}
-			resp.Result = map[string]any{
-				"protocolVersion": v,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "onlinepresence", "version": "1.0.0"},
-				"instructions":    "Live lookups about public domains: registration (RDAP/WHOIS), hosting provider (IP RDAP), TLS certificate, plus this host's public egress IP.",
-			}
-		case "ping":
-			resp.Result = map[string]any{}
-		case "tools/list":
-			resp.Result = map[string]any{"tools": tools}
-		case "tools/call":
-			var p struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			}
-			if err := json.Unmarshal(m.Params, &p); err != nil {
-				resp.Error = &rpcError{-32602, "invalid params"}
-				break
-			}
-			t, ok := byName[p.Name]
-			if !ok {
-				resp.Error = &rpcError{-32602, "unknown tool: " + p.Name}
-				break
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*lookupTimeout)
-			v, err := t.run(ctx, p.Arguments)
-			cancel()
-			if err != nil {
-				log.Printf("%s: %v", p.Name, err)
-				resp.Result = toolResult(map[string]string{"error": err.Error()}, true)
-			} else {
-				resp.Result = toolResult(v, false)
-			}
-		default:
-			resp.Error = &rpcError{-32601, "method not found: " + m.Method}
 		}
 		if err := enc.Encode(resp); err != nil {
 			return err

@@ -41,6 +41,17 @@ claude mcp add --scope user onlinepresence -- ~/.local/bin/onlinepresence-server
 the proxy's egress IP, not the local network's). **Rebuild + re-`install`
 after code changes** (the registered path is the ~/.local/bin copy).
 
+`onlinepresence-server serve-mcp` (`mcphttp.go`) is the same `mcpServer`
+over Streamable HTTP for a remote deployment behind a gateway: POST-only,
+stateless, 64 KiB body cap, no batches, `Origin` allow-list, 10-min result
+cache, 8 concurrent lookups. `MCP_PUBLIC=1` drops `my_public_ip` and sets
+`egressControl`, a dialer `Control` hook on every outbound socket (TLS dial,
+`http.DefaultClient`, port-43 WHOIS) that refuses non-public addresses. Env
+and behaviour are in README "Remote (Streamable HTTP)". Both transports share
+`mcpServer.handle`, so add tools in `mcpTools` only. Build Linux binaries with
+`CGO_ENABLED=0` (a cgo build on a musl host won't run on glibc Ubuntu).
+Keep deployment details (hosts, IPs, gateway config) out of this public repo.
+
 ## API Endpoints
 
 All endpoints use `PUT` with the domain as a path parameter.

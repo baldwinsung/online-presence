@@ -46,7 +46,7 @@ func validDomain(d string) (string, error) {
 func dialTLS443(ctx context.Context, domain string) (*tls.Conn, error) {
 	cfg := &tls.Config{ServerName: domain, InsecureSkipVerify: true}
 	target := net.JoinHostPort(domain, "443")
-	nd := &net.Dialer{Timeout: 5 * time.Second}
+	nd := &net.Dialer{Timeout: 5 * time.Second, Control: egressControl}
 
 	proxyURL, err := http.ProxyFromEnvironment(&http.Request{URL: &url.URL{Scheme: "https", Host: domain}})
 	if err != nil {
