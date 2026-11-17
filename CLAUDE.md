@@ -14,7 +14,9 @@ Streamable HTTP) and as a REST API. README.md is the user-facing reference.
   (Alpine) won't run on a glibc host (Ubuntu).
 - Add MCP tools in `mcpTools` (`mcp.go`) only: the stdio and HTTP transports
   share `mcpServer.handle`. A tool that reveals something about the server
-  itself (like `my_public_ip`) must be dropped in public mode.
+  itself must be dropped (or, like `my_public_ip`, rewritten to answer
+  about the caller) in public mode. A tool whose answer depends on the
+  caller, not only its arguments, must set `noCache`.
 - Every outbound socket must use `egressControl` (the dialer `Control` hook
   that `MCP_PUBLIC=1` sets). It already covers the TLS dial,
   `http.DefaultClient` and port-43 WHOIS. A new outbound path that skips it

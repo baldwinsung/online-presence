@@ -55,6 +55,22 @@ type mcpTool struct {
 	InputSchema map[string]any `json:"inputSchema"`
 	Annotations map[string]any `json:"annotations,omitempty"`
 	run         func(ctx context.Context, args map[string]any) (any, error)
+	// noCache: the result depends on who is asking, not just the arguments,
+	// so it must never be served from the shared result cache.
+	noCache bool
+}
+
+// callerIPKey carries the caller's public IP (set by the HTTP transport from
+// a trusted gateway header) through the request context.
+type callerIPKey struct{}
+
+func withCallerIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, callerIPKey{}, ip)
+}
+
+func callerIP(ctx context.Context) string {
+	ip, _ := ctx.Value(callerIPKey{}).(string)
+	return ip
 }
 
 func domainSchema() map[string]any {
@@ -191,6 +207,7 @@ func mcpTools(l lookups) []mcpTool {
 			Description: "The public IP address this MCP server's outbound traffic appears from, as seen by myip.baldwinsung.com. Behind a forward proxy this is the proxy's egress IP, not the local network's.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 			Annotations: readOnly,
+			noCache:     true,
 			run: func(ctx context.Context, _ map[string]any) (any, error) {
 				return myPublicIP(ctx)
 			},
@@ -241,12 +258,34 @@ func myPublicIP(ctx context.Context) (any, error) {
 	return map[string]any{"ip": strings.TrimSpace(string(b)), "source": myIPURL}, nil
 }
 
+// callerIPTool is my_public_ip for a public server: the address the caller's
+// request arrived from, as the gateway in front saw it.
+func callerIPTool(t mcpTool) mcpTool {
+	t.Description = "Your public IP address: where your requests to this server come from, as seen at its edge. " +
+		"From a local client (Claude Code, Claude Desktop, an IDE) that is your network's egress IP, or your VPN/proxy's. " +
+		"From a hosted client (e.g. a claude.ai connector) it is that service's egress IP, not yours."
+	t.run = func(ctx context.Context, _ map[string]any) (any, error) {
+		ip := callerIP(ctx)
+		if ip == "" {
+			return nil, errors.New("caller IP not available")
+		}
+		return map[string]any{"ip": ip, "source": "caller address at the server's edge"}, nil
+	}
+	return t
+}
+
 // mcpOptions shape one server instance. The zero value is the local stdio
 // server: every tool, no cache, no concurrency cap.
 type mcpOptions struct {
-	// public drops my_public_ip (it reports the server's own egress IP,
-	// meaningless to a remote caller) for a server exposed to the internet.
+	// public is for a server exposed to the internet. There my_public_ip
+	// can't report the server's own egress IP (meaningless to a remote
+	// caller): it reports the caller's IP if callerIPHeader is set, and is
+	// dropped otherwise.
 	public bool
+	// callerIPHeader names a request header carrying the caller's public IP,
+	// set by a trusted gateway in front (HTTP transport only). Only set it
+	// when nothing but that gateway can reach the server.
+	callerIPHeader string
 	// cacheTTL > 0 caches each tool result per (tool, arguments) for that long.
 	cacheTTL time.Duration
 	// maxCalls > 0 caps concurrent tools/call; a call that can't get a slot
@@ -267,7 +306,10 @@ func newMCPServer(l lookups, o mcpOptions) *mcpServer {
 	s := &mcpServer{byName: map[string]mcpTool{}, opts: o}
 	for _, t := range mcpTools(l) {
 		if o.public && t.Name == "my_public_ip" {
-			continue
+			if o.callerIPHeader == "" {
+				continue
+			}
+			t = callerIPTool(t)
 		}
 		s.tools = append(s.tools, t)
 		s.byName[t.Name] = t
@@ -284,6 +326,9 @@ func newMCPServer(l lookups, o mcpOptions) *mcpServer {
 func (s *mcpServer) instructions() string {
 	text := "Live lookups about public domains: registration (RDAP/WHOIS), hosting provider (IP RDAP), TLS certificate"
 	if _, ok := s.byName["my_public_ip"]; ok {
+		if s.opts.public {
+			return text + ", plus the public IP your requests come from."
+		}
 		return text + ", plus this host's public egress IP."
 	}
 	return text + "."
@@ -339,7 +384,7 @@ func (s *mcpServer) handle(ctx context.Context, m rpcMsg) (resp rpcResp, ok bool
 
 func (s *mcpServer) call(ctx context.Context, t mcpTool, args map[string]any) map[string]any {
 	key := ""
-	if s.cache != nil {
+	if s.cache != nil && !t.noCache {
 		b, _ := json.Marshal(args) // map keys marshal sorted, so equal args give equal keys
 		key = t.Name + "\x00" + string(b)
 		if v, hit := s.cache.get(key); hit {
@@ -373,7 +418,7 @@ func (s *mcpServer) call(ctx context.Context, t mcpTool, args map[string]any) ma
 		return toolResult(map[string]string{"error": err.Error()}, true)
 	}
 	out := toolResult(v, false)
-	if s.cache != nil {
+	if s.cache != nil && !t.noCache {
 		s.cache.put(key, out)
 	}
 	return out

@@ -42,7 +42,7 @@ Go 1.26 or newer. The binary is static with `CGO_ENABLED=0`.
 | `domain_registration` | Registrar, created and expiry dates (RDAP, falling back to port-43 WHOIS) |
 | `hosting_provider` | The domain's A record and who holds that IP block (IP RDAP). Behind a CDN this is the CDN |
 | `ssl_certificate` | Subject, issuer, validity, days remaining and SANs of the certificate on port 443 (not validated, so expired or self-signed certificates are still reported) |
-| `my_public_ip` | The server's own public egress IP. Local (stdio) and non-public HTTP mode only |
+| `my_public_ip` | Local (stdio) and non-public HTTP: the server's own public egress IP. Public HTTP: the caller's IP, from `MCP_CALLER_IP_HEADER` (tool hidden if unset) |
 
 ### Local (stdio)
 
@@ -62,7 +62,8 @@ MCP_PUBLIC=1 onlinepresence-server serve-mcp      # listens on 127.0.0.1:8090
 | Variable | Default | Meaning |
 |---|---|---|
 | `MCP_LISTEN_ADDR` | `127.0.0.1:8090` | Listen address |
-| `MCP_PUBLIC` | off | `1` for an internet-facing server: drops `my_public_ip`, and refuses outbound connections to private, loopback, link-local and other reserved addresses, so a domain that resolves to `10.0.0.1` or `127.0.0.1` can't make the server probe its own network. Needs direct egress (a proxy on a private IP is refused too) |
+| `MCP_PUBLIC` | off | `1` for an internet-facing server: `my_public_ip` reports the caller (see next row) instead of the server, and refuses outbound connections to private, loopback, link-local and other reserved addresses, so a domain that resolves to `10.0.0.1` or `127.0.0.1` can't make the server probe its own network. Needs direct egress (a proxy on a private IP is refused too) |
+| `MCP_CALLER_IP_HEADER` | unset | Header holding the caller's IP, set by the gateway in front (e.g. `X-MCP-Caller-IP`). Trusted as is, so set it only when the gateway is the server's sole client. Unset in public mode = no `my_public_ip` |
 | `MCP_ALLOWED_ORIGINS` | none | Comma-separated browser `Origin` values to accept. Other `Origin`s get 403; requests without one (non-browser clients) are accepted |
 
 Behaviour:

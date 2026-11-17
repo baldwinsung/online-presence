@@ -82,6 +82,25 @@ func TestMCPHTTP(t *testing.T) {
 		t.Errorf("/healthz: %d", rec.Code)
 	}
 
+	// public + caller-IP header: my_public_ip reports the caller, never cached
+	pub := newMCPServer(fakeLookups(), mcpOptions{public: true, callerIPHeader: "X-MCP-Caller-IP", cacheTTL: time.Minute}).httpHandler(nil)
+	call := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"my_public_ip","arguments":{}}}`
+	for _, tc := range []struct{ hdr, want string }{
+		{"203.0.113.7", `\"ip\": \"203.0.113.7\"`},
+		{"2001:db8::1", `\"ip\": \"2001:db8::1\"`},
+		{"::ffff:198.51.100.9", `\"ip\": \"198.51.100.9\"`},
+		{"", `caller IP not available`},
+		{"not-an-ip", `caller IP not available`},
+	} {
+		rec := post(t, pub, call, map[string]string{"X-MCP-Caller-IP": tc.hdr})
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("caller IP %q: body missing %s:\n%s", tc.hdr, tc.want, rec.Body.String())
+		}
+	}
+	if rec := post(t, pub, `{"jsonrpc":"2.0","id":5,"method":"initialize","params":{}}`, nil); !strings.Contains(rec.Body.String(), "the public IP your requests come from") {
+		t.Errorf("public instructions don't mention caller IP:\n%s", rec.Body.String())
+	}
+
 	// local (non-public) server still lists my_public_ip
 	local := newMCPServer(fakeLookups(), mcpOptions{}).httpHandler(nil)
 	if rec := post(t, local, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, nil); !strings.Contains(rec.Body.String(), "my_public_ip") {

@@ -17,10 +17,15 @@ package main
 //
 // Environment:
 //   MCP_LISTEN_ADDR      default 127.0.0.1:8090 (keep it on loopback behind a proxy)
-//   MCP_PUBLIC=1         internet-facing mode: drop my_public_ip, and refuse
-//                        outbound connections to private/reserved addresses
-//                        (so a crafted domain can't make the server probe its
-//                        own network, e.g. a name whose A record is 10.0.0.1)
+//   MCP_PUBLIC=1         internet-facing mode: refuse outbound connections to
+//                        private/reserved addresses (so a crafted domain can't
+//                        make the server probe its own network, e.g. a name
+//                        whose A record is 10.0.0.1), and my_public_ip reports
+//                        the caller's IP from MCP_CALLER_IP_HEADER (dropped
+//                        if that's unset) instead of the server's own
+//   MCP_CALLER_IP_HEADER request header with the caller's IP, set by the
+//                        gateway in front (e.g. X-MCP-Caller-IP). Trusted as
+//                        is: only set it when the gateway is the sole client
 //   MCP_ALLOWED_ORIGINS  comma-separated Origin values to accept; requests
 //                        with any other Origin header get 403 (requests with
 //                        no Origin, i.e. non-browser clients, are accepted)
@@ -61,10 +66,11 @@ func runServeMCP() error {
 		}
 	}
 	s := newMCPServer(liveLookups(), mcpOptions{
-		public:   public,
-		cacheTTL: 10 * time.Minute,
-		maxCalls: 8,
-		callWait: 5 * time.Second,
+		public:         public,
+		callerIPHeader: strings.TrimSpace(os.Getenv("MCP_CALLER_IP_HEADER")),
+		cacheTTL:       10 * time.Minute,
+		maxCalls:       8,
+		callWait:       5 * time.Second,
 	})
 	srv := &http.Server{
 		Addr:              addr,
@@ -135,7 +141,13 @@ func (s *mcpServer) servePOST(w http.ResponseWriter, r *http.Request) {
 		rpcErr(http.StatusBadRequest, -32600, `jsonrpc must be "2.0"`)
 		return
 	}
-	resp, ok := s.handle(r.Context(), m)
+	ctx := r.Context()
+	if h := s.opts.callerIPHeader; h != "" {
+		if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get(h))); err == nil {
+			ctx = withCallerIP(ctx, a.Unmap().String())
+		}
+	}
+	resp, ok := s.handle(ctx, m)
 	if !ok { // notification or client response
 		w.WriteHeader(http.StatusAccepted)
 		return
