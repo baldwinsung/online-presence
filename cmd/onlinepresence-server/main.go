@@ -1,8 +1,10 @@
-// Command onlinepresence-server is the onlinePresence REST API: WHOIS
-// registration, hosting provider and TLS certificate details for a domain,
-// one PUT endpoint each. It replaced the Flask app (app.py) on 2026-10-23
-// so the whole VPS fleet runs small Go binaries; routes, methods and JSON
-// shapes are unchanged (see README for the few deliberate differences).
+// Command onlinepresence-server looks up the online presence of a domain:
+// registration (RDAP, WHOIS fallback), hosting provider (A record, then IP
+// RDAP) and TLS certificate details. It serves the same lookups three ways:
+//
+//	onlinepresence-server [serve]   REST API, one PUT endpoint per field
+//	onlinepresence-server mcp       MCP server over stdio
+//	onlinepresence-server serve-mcp MCP server over Streamable HTTP
 //
 // No database and no state: every request is a live outbound lookup.
 package main

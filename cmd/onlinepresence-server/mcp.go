@@ -26,8 +26,7 @@ var mcpProtocols = map[string]bool{
 	"2024-11-05": true, "2025-03-26": true, "2025-06-18": true, "2025-11-25": true,
 }
 
-// myIPURL is the fleet's plain-text "what IP do you see" page (personal_sites
-// sites-server; returns CF-Connecting-IP).
+// myIPURL answers with the caller's public IP as plain text.
 var myIPURL = "https://myip.baldwinsung.com"
 
 type rpcMsg struct {

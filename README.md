@@ -1,153 +1,145 @@
-# onlinePresence-app
+# onlinePresence
 
-Go REST API to look up the online presence of a domain — WHOIS registration, hosting provider, and SSL certificate details — all via HTTP PUT endpoints. (A Flask app until 2026-10-23; same routes and JSON.)
+Look up the online presence of a domain: **who registered it, who hosts it, and
+what TLS certificate it serves**. One small Go binary (no database, no state)
+that offers the same lookups three ways:
 
-> **Not deployed (2026-11-14).** Retired from the VPS fleet; `op.baldwinsung.com` no longer exists. Run it locally (below). `deploy/k8s/vps/` is kept for reference only.
+| Mode | Command | For |
+|---|---|---|
+| MCP over stdio | `onlinepresence-server mcp` | Claude Code, Claude Desktop and other local MCP clients |
+| MCP over HTTP | `onlinepresence-server serve-mcp` | Remote MCP clients, behind a reverse proxy |
+| REST API | `onlinepresence-server serve` (default) | Scripts and `curl` |
 
+## Hosted
 
-## Getting Started
-
-### Local
+A public instance runs at **`https://mcp.baldwinsung.com/onlinepresence`**
+(MCP over HTTP): 50 free tool calls per IP, then a free personal token from
+[mcp.baldwinsung.com](https://mcp.baldwinsung.com).
 
 ```bash
-go test ./...
+claude mcp add --transport http onlinepresence https://mcp.baldwinsung.com/onlinepresence
+```
+
+## Install
+
+```bash
+go install github.com/baldwinsung/onlinePresence-app/cmd/onlinepresence-server@latest
+```
+
+or build from a checkout:
+
+```bash
 go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
-LISTEN_ADDR=:8000 bin/onlinepresence-server serve
 ```
 
-### Docker
+Go 1.25 or newer. The binary is static with `CGO_ENABLED=0`.
 
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
-docker buildx build -t onlinepresence-app .
-docker run --name op-app -p 8000:8080 onlinepresence-app
-```
+## MCP tools
 
-## MCP server
+| Tool | Returns |
+|---|---|
+| `online_presence` | Registration, hosting provider and certificate in one call |
+| `domain_registration` | Registrar, created and expiry dates (RDAP, falling back to port-43 WHOIS) |
+| `hosting_provider` | The domain's A record and who holds that IP block (IP RDAP). Behind a CDN this is the CDN |
+| `ssl_certificate` | Subject, issuer, validity, days remaining and SANs of the certificate on port 443 (not validated, so expired or self-signed certificates are still reported) |
+| `my_public_ip` | The server's own public egress IP. Local (stdio) and non-public HTTP mode only |
 
-The same lookups are available as [MCP](https://modelcontextprotocol.io) tools over stdio:
+### Local (stdio)
 
 ```bash
 claude mcp add --scope user onlinepresence -- /path/to/onlinepresence-server mcp
 ```
 
-Tools: `domain_registration`, `hosting_provider`, `ssl_certificate`, `online_presence` (all three in one call), `my_public_ip`. Works behind an HTTP proxy (`HTTPS_PROXY`): registration data comes from RDAP over HTTPS, with port-43 WHOIS as a fallback, and the certificate fetch tunnels with `CONNECT`.
-
 ### Remote (Streamable HTTP)
 
-`onlinepresence-server serve-mcp` serves the same tools over MCP's Streamable HTTP transport, meant to sit behind a reverse proxy that terminates TLS and handles auth and rate limits:
+`serve-mcp` speaks MCP's Streamable HTTP transport. It's meant to sit behind a
+reverse proxy that terminates TLS and handles authentication and rate limits.
 
 ```bash
-MCP_LISTEN_ADDR=127.0.0.1:8090 MCP_PUBLIC=1 onlinepresence-server serve-mcp
-claude mcp add --transport http onlinepresence https://your-proxy.example/   # once proxied
+MCP_PUBLIC=1 onlinepresence-server serve-mcp      # listens on 127.0.0.1:8090
 ```
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MCP_LISTEN_ADDR` | `127.0.0.1:8090` | Listen address. Keep it on loopback behind the proxy. |
-| `MCP_PUBLIC` | off | `1` = internet-facing: drops `my_public_ip`, and refuses outbound connections to private, loopback, link-local and other reserved addresses (so a domain whose A record is `10.0.0.1` or `127.0.0.1` can't make the server probe its own network). Needs direct egress: a proxy on a private IP is refused too. |
-| `MCP_ALLOWED_ORIGINS` | none | Comma-separated `Origin` values to accept. Requests carrying any other `Origin` get 403; requests with no `Origin` (non-browser clients) are accepted. |
+| `MCP_LISTEN_ADDR` | `127.0.0.1:8090` | Listen address |
+| `MCP_PUBLIC` | off | `1` for an internet-facing server: drops `my_public_ip`, and refuses outbound connections to private, loopback, link-local and other reserved addresses, so a domain that resolves to `10.0.0.1` or `127.0.0.1` can't make the server probe its own network. Needs direct egress (a proxy on a private IP is refused too) |
+| `MCP_ALLOWED_ORIGINS` | none | Comma-separated browser `Origin` values to accept. Other `Origin`s get 403; requests without one (non-browser clients) are accepted |
 
 Behaviour:
-- `POST /` only, one `application/json` response per request; no SSE stream, so `GET`/`DELETE` get 405. Stateless (no `Mcp-Session-Id`). `GET /healthz` for probes.
-- Notifications and client responses get `202 Accepted`. JSON-RPC batches are refused, bodies are capped at 64 KiB, and an unsupported `MCP-Protocol-Version` header gets 400.
-- Successful results are cached for 10 minutes per tool and arguments; errors aren't cached. At most 8 lookups run at once; a call that can't start within 5 s gets a "server busy" tool error.
+- `POST /` only, one JSON response per request; `GET` and `DELETE` get 405 (no
+  SSE stream, no sessions). `GET /healthz` for probes.
+- Notifications get `202 Accepted`. Batches are refused, bodies are capped at
+  64 KiB, and an unsupported `MCP-Protocol-Version` header gets 400.
+- Successful results are cached for 10 minutes; errors aren't. At most 8
+  lookups run at once; a call that can't start within 5 s gets a "server busy"
+  tool error.
 
-## API Reference
-
-All endpoints use `PUT`. Replace `<domain>` with a domain name (e.g. `google.com`).
-
-| Endpoint | Description |
-|---|---|
-| `PUT /domainwhois_registrar/<domain>` | Domain registrar |
-| `PUT /domainwhois_created/<domain>` | Domain registration date |
-| `PUT /domainwhois_expires/<domain>` | Domain expiration date |
-| `PUT /hostingprovider/<domain>` | Hosting provider (via IP RDAP lookup) |
-| `PUT /sslcertificate_subject/<domain>` | SSL certificate subject (CN) |
-| `PUT /sslcertificate_issuer/<domain>` | SSL certificate issuer (O) |
-| `PUT /sslcertificate_notbefore/<domain>` | SSL valid-from date |
-| `PUT /sslcertificate_notafter/<domain>` | SSL expiry date |
-| `PUT /sslcertificate_san/<domain>` | Subject Alternative Names (sorted) |
-
-## Examples
+## REST API
 
 ```bash
+LISTEN_ADDR=:8000 onlinepresence-server serve     # default :8080
 curl -X PUT http://localhost:8000/domainwhois_registrar/google.com
 "MarkMonitor Inc."
-
-curl -X PUT http://localhost:8000/domainwhois_created/google.com
-"Mon, 15 Sep 1997 04:00:00 GMT"
-
-curl -X PUT http://localhost:8000/domainwhois_expires/google.com
-"Thu, 14 Sep 2028 04:00:00 GMT"
-
-curl -X PUT http://localhost:8000/sslcertificate_subject/google.com
-"CN=*.google.com"
-
-curl -X PUT http://localhost:8000/sslcertificate_issuer/google.com
-"O=Google Trust Services"
-
-curl -X PUT http://localhost:8000/sslcertificate_notafter/google.com
-"Mon, 29 Jul 2024 13:42:08 GMT"
-
-curl -X PUT http://localhost:8000/sslcertificate_san/meta.com
-["DNS:*.meta.com","DNS:meta.com"]
 ```
 
-### Differences from the Flask version (2026-10-23)
+Every endpoint is `PUT /<endpoint>/<domain>` and returns JSON (errors are
+`{"error": "..."}`). `GET /health` for probes.
 
-- `sslcertificate_subject` / `_issuer` return the `CN=` / `O=` attribute.
-  Flask returned a fixed position in the DN, so certificates whose subject
-  starts with the country (DigiCert's, e.g. meta.com) gave `"C=US"`.
-- `sslcertificate_san` works again (it returned 502 for every domain under
-  pyOpenSSL 26) and no longer has a stray leading space on all but the
-  first entry.
-- WHOIS comes from `likexian/whois` + `whois-parser`, which takes the
-  registry's registrar name (`"MarkMonitor Inc."`) where python-whois took
-  the registrar's own (`"MarkMonitor, Inc."`).
-- Errors are always JSON (`{"error": ...}`); unknown routes and wrong
-  methods return Go's plain-text 404/405 instead of Flask's HTML pages.
+| Endpoint | Returns |
+|---|---|
+| `domainwhois_registrar` | Registrar name |
+| `domainwhois_created` | Registration date |
+| `domainwhois_expires` | Expiry date |
+| `hostingprovider` | Holder of the IP block the domain's first A record is in |
+| `sslcertificate_subject` | Certificate subject (`CN=...`) |
+| `sslcertificate_issuer` | Certificate issuer (`O=...`) |
+| `sslcertificate_notbefore` | Valid from |
+| `sslcertificate_notafter` | Valid until |
+| `sslcertificate_san` | Subject Alternative Names, sorted |
 
-## Deployment
+Dates are HTTP dates, e.g. `"Thu, 14 Sep 2028 04:00:00 GMT"`.
 
-Live at `op.baldwinsung.com`, publicly accessible (no auth — this is a
-public lookup API, unlike the private apps in this fleet). Runs as 1
-replica on each of 3 independent VPS (NY, LA, Taipei — see
-`personal_vps`), each its own single-node k3s cluster. No database, no
-persistent volume, no secrets of its own at all — every endpoint is a
-live outbound network call, so there's nothing to keep in sync between
-replicas and nothing app-specific to configure.
+## Docker
 
 ```bash
-# One-time per VPS, after the image is built+imported (see below):
-kubectl apply -f deploy/k8s/vps/namespace.yaml -f deploy/k8s/vps/app.yaml
+docker build -t onlinepresence .
+docker run --rm -p 8080:8080 onlinepresence                       # REST
+docker run --rm -p 8090:8090 -e MCP_LISTEN_ADDR=0.0.0.0:8090 -e MCP_PUBLIC=1 \
+  onlinepresence serve-mcp                                        # MCP over HTTP
 ```
 
-Routing is one `ingress_rule` in `baldwinsung_cloudflare/zerotrust/tunnel.tf`'s
-shared `vps_shared` Cloudflare Tunnel (`op.baldwinsung.com` →
-`onlinepresence-app.onlinepresence-app.svc.cluster.local:5000`), fronted
-by `personal_vps`'s single shared `cloudflared` Deployment per VPS
-(`personal_vps/deploy/k8s/cloudflared-shared/`) — **not** a dedicated
-tunnel/Deployment of this app's own. This app briefly had one (created
-alongside the VPS migration, 2026-09-26), then it was folded into the
-shared tunnel the same day after 8 separate per-app cloudflared processes
-were found driving a multi-hour crash-loop incident on the LA VPS — see
-`personal_vps/CLAUDE.md`'s "Shared cloudflared" section for the full
-story. Adding this (or any) app to the fleet now means adding an
-`ingress_rule` to `vps_shared`'s config, not standing up a new tunnel.
+## How it works
 
-No CI is wired up yet — build the binary (see Getting Started), then the
-image with `docker buildx build -t localhost/onlinepresence-app:vps-latest
---load .` and distribute it to each VPS with `docker save` + `k3s ctr -n
-k8s.io images import`, matching `imagePullPolicy: Never` in `app.yaml`.
-The container listens on 8080; the Service keeps port 5000 so the tunnel
-rule is unchanged. Migrated
-2026-09-26 off an old single-point deployment (podman + a separate system
-containerd + a systemd unit, LA only, no redundancy) that predated this
-fleet pattern.
+- **Registration:** RDAP first (IANA bootstrap, HTTPS), port-43 WHOIS
+  ([likexian/whois](https://github.com/likexian/whois) +
+  [whois-parser](https://github.com/likexian/whois-parser)) if RDAP has no answer.
+- **Hosting:** the Go resolver for the A record, then an RDAP query for the IP
+  (`rdap.arin.net`, which redirects to the right regional registry); the first
+  entity's name is reported.
+- **Certificate:** a TLS handshake on port 443 without verification, so the
+  certificate is reported whatever its state.
+- **Proxies:** works behind an HTTP forward proxy. RDAP honours `HTTPS_PROXY`,
+  and the certificate fetch tunnels with `CONNECT` (`NO_PROXY` respected).
+- Domains are validated before any lookup.
+
+## Development
+
+```bash
+go vet ./...
+go test -race ./...     # tests use fake lookups, no network needed
+```
+
+The code is one package, `cmd/onlinepresence-server/`:
+
+| File | What |
+|---|---|
+| `main.go` | Commands, REST API, the `lookups` interface tests fake |
+| `egress.go` | RDAP domain lookups, proxy-aware TLS dial |
+| `mcp.go` | MCP tools and JSON-RPC dispatch (no SDK), stdio transport |
+| `mcphttp.go` | Streamable HTTP transport, result cache, public-mode address guard |
 
 ## Credits
 
-[Richard Penman](https://github.com/richardpenman) for python-whois (used
-until 2026-10-23), [Li Kexian](https://github.com/likexian) for
-`whois` and `whois-parser`
+[Li Kexian](https://github.com/likexian) for `whois` and `whois-parser`, and
+[Richard Penman](https://github.com/richardpenman) for python-whois, used by
+the original Python version of this project.

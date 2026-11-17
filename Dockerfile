@@ -1,9 +1,19 @@
-# Built with: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
-# The binary is compiled on the host first (same pattern as the rest of the
-# VPS fleet), so the image is just alpine + one static binary. Replaced the
-# python:3.14-slim + Flask image on 2026-10-23.
-FROM --platform=linux/amd64 alpine:3.24
-COPY bin/onlinepresence-server /usr/local/bin/onlinepresence-server
+# Multi-stage: build a static binary, ship it on a minimal image.
+#   docker build -t onlinepresence .
+#   docker run --rm -p 8080:8080 onlinepresence                 # REST API
+#   docker run --rm -p 8090:8090 -e MCP_LISTEN_ADDR=0.0.0.0:8090 \
+#     onlinepresence serve-mcp                                  # MCP over HTTP
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /onlinepresence-server ./cmd/onlinepresence-server
+
+FROM alpine:3.24
+RUN apk add --no-cache ca-certificates
+COPY --from=build /onlinepresence-server /usr/local/bin/onlinepresence-server
 USER nobody
+EXPOSE 8080 8090
 ENTRYPOINT ["onlinepresence-server"]
 CMD ["serve"]
