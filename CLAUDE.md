@@ -21,8 +21,25 @@ docker buildx build -t app .
 docker run --name test -p 8000:8080 app
 ```
 
-WHOIS (port 43) and TLS (443) lookups dial out directly; they ignore
-`HTTPS_PROXY`, which only the RDAP lookup honors.
+Egress works behind an HTTP forward proxy (hosts with HTTPS-via-proxy
+only): registration data comes from **RDAP** first (IANA bootstrap, HTTPS,
+honors `HTTPS_PROXY`), port-43 WHOIS only as fallback; the TLS cert fetch
+tunnels via `CONNECT` through `HTTPS_PROXY` when one applies (NO_PROXY
+respected), else dials direct. Domains are validated (`validDomain`) before
+any lookup.
+
+### MCP server (2026-11-17)
+```bash
+go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
+install -m755 bin/onlinepresence-server ~/.local/bin/
+claude mcp add --scope user onlinepresence -- ~/.local/bin/onlinepresence-server mcp
+```
+`onlinepresence-server mcp` speaks MCP over stdio (hand-rolled JSON-RPC in
+`mcp.go`, no SDK dependency; tools only). Tools: `domain_registration`,
+`hosting_provider`, `ssl_certificate`, `online_presence` (all three),
+`my_public_ip` (GET myip.baldwinsung.com — behind a forward proxy this is
+the proxy's egress IP, not the local network's). **Rebuild + re-`install`
+after code changes** (the registered path is the ~/.local/bin copy).
 
 ## API Endpoints
 
@@ -42,7 +59,7 @@ All endpoints use `PUT` with the domain as a path parameter.
 
 ## Architecture
 
-One Go binary, `cmd/onlinepresence-server/main.go`. No database. All lookups are live network calls — WHOIS via `likexian/whois` + `whois-parser`, DNS via the Go resolver, RDAP as a plain JSON GET to `rdap.arin.net` (redirects to the right RIR; first entity's vCard `fn`), TLS via `crypto/tls` (unverified, like the old `ssl.get_server_certificate`). Outbound calls sit behind the `lookups` struct so tests can fake them. See README's "Differences from the Flask version".
+One Go binary, `cmd/onlinepresence-server/` (`main.go` REST, `egress.go` RDAP-domain + proxy-aware TLS, `mcp.go` MCP). No database. All lookups are live network calls — WHOIS via `likexian/whois` + `whois-parser`, DNS via the Go resolver, RDAP as a plain JSON GET to `rdap.arin.net` (redirects to the right RIR; first entity's vCard `fn`), TLS via `crypto/tls` (unverified, like the old `ssl.get_server_certificate`). Outbound calls sit behind the `lookups` struct so tests can fake them. See README's "Differences from the Flask version".
 
 ## Notes
 

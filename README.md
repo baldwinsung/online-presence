@@ -23,6 +23,16 @@ docker buildx build -t onlinepresence-app .
 docker run --name op-app -p 8000:8080 onlinepresence-app
 ```
 
+## MCP server
+
+The same lookups are available as [MCP](https://modelcontextprotocol.io) tools over stdio:
+
+```bash
+claude mcp add --scope user onlinepresence -- /path/to/onlinepresence-server mcp
+```
+
+Tools: `domain_registration`, `hosting_provider`, `ssl_certificate`, `online_presence` (all three in one call), `my_public_ip`. Works behind an HTTP proxy (`HTTPS_PROXY`): registration data comes from RDAP over HTTPS, with port-43 WHOIS as a fallback, and the certificate fetch tunnels with `CONNECT`.
+
 ## API Reference
 
 All endpoints use `PUT`. Replace `<domain>` with a domain name (e.g. `google.com`).

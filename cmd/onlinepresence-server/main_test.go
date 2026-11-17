@@ -120,3 +120,51 @@ func TestRDAPEntityName(t *testing.T) {
 		t.Errorf("fn = %q", got)
 	}
 }
+
+func TestMCP(t *testing.T) {
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"domain_registration","arguments":{"domain":"https://Google.com/x"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ssl_certificate","arguments":{"domain":"bad domain\r\nX: y"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"online_presence","arguments":{"domain":"down.example"}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"nope"}`,
+	}, "\n")
+	var out strings.Builder
+	if err := serveMCP(strings.NewReader(in), &out, fakeLookups()); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("got %d responses, want 6 (notification must get none):\n%s", len(lines), out.String())
+	}
+	for i, want := range []string{
+		`"protocolVersion":"2025-06-18"`,
+		`"name":"my_public_ip"`,
+		`MarkMonitor, Inc.`,
+		`not a domain name`,
+		`connection refused`,
+		`"code":-32601`,
+	} {
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("response %d missing %s:\n%s", i+1, want, lines[i])
+		}
+	}
+	if !strings.Contains(lines[3], `"isError":true`) || strings.Contains(lines[2], `"isError":true`) {
+		t.Errorf("isError flags wrong:\n%s\n%s", lines[2], lines[3])
+	}
+}
+
+func TestValidDomain(t *testing.T) {
+	for _, ok := range []string{"example.com", "a-b.co.uk", "XN--80AK6AA92E.com."} {
+		if _, err := validDomain(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "localhost", "a b.com", "x.com:443", "x.com\r\nHost: y", "-a.com", "a..com"} {
+		if _, err := validDomain(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

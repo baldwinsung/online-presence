@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -28,8 +27,17 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] != "serve" {
-		log.Fatalf("unknown command %q (only \"serve\")", os.Args[1])
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "serve":
+		case "mcp":
+			if err := serveMCP(os.Stdin, os.Stdout, liveLookups()); err != nil {
+				log.Fatal(err)
+			}
+			return
+		default:
+			log.Fatalf("unknown command %q (\"serve\" or \"mcp\")", os.Args[1])
+		}
 	}
 
 	addr := os.Getenv("LISTEN_ADDR")
@@ -59,10 +67,20 @@ const lookupTimeout = 15 * time.Second
 func liveLookups() lookups {
 	whoisClient := whois.NewClient().SetTimeout(lookupTimeout)
 	return lookups{
+		// RDAP first (HTTPS, works behind a proxy), port-43 WHOIS if RDAP
+		// has no answer. Both errors are reported if both fail.
 		whois: func(ctx context.Context, domain string) (whoisparser.WhoisInfo, error) {
-			raw, err := whoisClient.Whois(domain)
+			domain, err := validDomain(domain)
 			if err != nil {
 				return whoisparser.WhoisInfo{}, err
+			}
+			info, rerr := rdapDomain(ctx, domain)
+			if rerr == nil {
+				return info, nil
+			}
+			raw, err := whoisClient.Whois(domain)
+			if err != nil {
+				return whoisparser.WhoisInfo{}, fmt.Errorf("rdap: %v; whois: %w", rerr, err)
 			}
 			return whoisparser.Parse(raw)
 		},
@@ -70,7 +88,13 @@ func liveLookups() lookups {
 			return net.DefaultResolver.LookupIP(ctx, "ip4", domain)
 		},
 		rdapName: rdapFirstEntityName,
-		cert:     serverCert,
+		cert: func(ctx context.Context, domain string) (*x509.Certificate, error) {
+			domain, err := validDomain(domain)
+			if err != nil {
+				return nil, err
+			}
+			return fetchCert(ctx, domain)
+		},
 	}
 }
 
@@ -190,26 +214,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-
-// serverCert returns the leaf certificate domain:443 presents for its own
-// name. Not verified, like Python's ssl.get_server_certificate: the point is
-// to report what's there, expired or not.
-func serverCert(ctx context.Context, domain string) (*x509.Certificate, error) {
-	d := tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: 5 * time.Second},
-		Config:    &tls.Config{ServerName: domain, InsecureSkipVerify: true},
-	}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(domain, "443"))
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	if len(certs) == 0 {
-		return nil, errors.New("no certificate presented")
-	}
-	return certs[0], nil
 }
 
 var (
