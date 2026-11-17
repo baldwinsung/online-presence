@@ -144,3 +144,7 @@ The code is one package, `cmd/onlinepresence-server/`:
 [Li Kexian](https://github.com/likexian) for `whois` and `whois-parser`, and
 [Richard Penman](https://github.com/richardpenman) for python-whois, used by
 the original Python version of this project.
+
+## License
+
+[MIT](LICENSE)
