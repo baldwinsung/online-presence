@@ -42,5 +42,5 @@ registered path is that copy).
   which behind a CDN is the CDN.
 - The certificate fetch doesn't validate, on purpose: expired and self-signed
   certificates are still reported.
-- The REST API keeps the original Python app's routes (one PUT per field)
+- The REST API keeps its original routes (one PUT per field)
   for compatibility.

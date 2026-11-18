@@ -52,8 +52,8 @@ onlinepresence -server http://127.0.0.1:8090/ google.com   # your own serve-mcp
 | `ONLINEPRESENCE_URL` | MCP endpoint, default `https://mcp.baldwinsung.com/onlinepresence` (same as `-server`) |
 | `ONLINEPRESENCE_TOKEN` | Personal token for the hosted instance, sent as `Authorization: Bearer` |
 
-It honours `HTTPS_PROXY`. This replaces the old Python `onlinePresence-cli`;
-MX and name-server records are not reported (use `dig MX` / `dig NS`).
+It honours `HTTPS_PROXY`. MX and name-server records are not reported (use
+`dig MX` / `dig NS`).
 
 ## MCP tools
 
@@ -163,9 +163,7 @@ The server is one package, `cmd/onlinepresence-server/`; the CLI is
 
 ## Credits
 
-[Li Kexian](https://github.com/likexian) for `whois` and `whois-parser`, and
-[Richard Penman](https://github.com/richardpenman) for python-whois, used by
-the original Python version of this project.
+[Li Kexian](https://github.com/likexian) for `whois` and `whois-parser`.
 
 ## License
 

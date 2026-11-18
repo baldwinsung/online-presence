@@ -204,7 +204,7 @@ func newMux(l lookups) http.Handler {
 	return mux
 }
 
-// httpDate formats like Flask's jsonify did for a datetime:
+// httpDate formats dates as HTTP dates (the REST API's original format):
 // "Mon, 15 Sep 1997 04:00:00 GMT".
 func httpDate(t *time.Time) any {
 	if t == nil || t.IsZero() {
@@ -241,8 +241,8 @@ var shortNames = map[string]string{
 }
 
 // nameAttr returns "CN=..." / "O=..." for want, or the DN's first attribute
-// if it has none (the Flask app always took a fixed position, which landed
-// on C= for DigiCert-style subjects that start with the country).
+// if it has none (taking a fixed position instead would land on C= for
+// DigiCert-style subjects that start with the country).
 func nameAttr(n pkix.Name, want asn1.ObjectIdentifier) string {
 	format := func(a pkix.AttributeTypeAndValue) string {
 		k, ok := shortNames[a.Type.String()]
