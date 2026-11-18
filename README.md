@@ -2,10 +2,11 @@
 
 Look up the online presence of a domain: **who registered it, who hosts it, and
 what TLS certificate it serves**. One small Go binary (no database, no state)
-that offers the same lookups three ways:
+that offers the same lookups three ways, plus a thin command-line client:
 
 | Mode | Command | For |
 |---|---|---|
+| Command line | `onlinepresence example.com` | People: a readable report from a server (the hosted one by default) |
 | MCP over stdio | `onlinepresence-server mcp` | Claude Code, Claude Desktop and other local MCP clients |
 | MCP over HTTP | `onlinepresence-server serve-mcp` | Remote MCP clients, behind a reverse proxy |
 | REST API | `onlinepresence-server serve` (default) | Scripts and `curl` |
@@ -23,16 +24,36 @@ claude mcp add --transport http onlinepresence https://mcp.baldwinsung.com/onlin
 ## Install
 
 ```bash
-go install github.com/baldwinsung/onlinePresence-app/cmd/onlinepresence-server@latest
+go install github.com/baldwinsung/online-presence/cmd/onlinepresence-server@latest   # server
+go install github.com/baldwinsung/online-presence/cmd/onlinepresence@latest          # CLI
 ```
 
 or build from a checkout:
 
 ```bash
-go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
+go build -o bin/ ./cmd/...
 ```
 
 Go 1.26 or newer. The binary is static with `CGO_ENABLED=0`.
+
+## Command line
+
+`onlinepresence` is a thin client: it makes one `online_presence` MCP call to a
+server and prints the report. It does no lookups itself.
+
+```bash
+onlinepresence google.com                                  # hosted instance
+onlinepresence -json google.com                            # raw JSON
+onlinepresence -server http://127.0.0.1:8090/ google.com   # your own serve-mcp
+```
+
+| Variable | Meaning |
+|---|---|
+| `ONLINEPRESENCE_URL` | MCP endpoint, default `https://mcp.baldwinsung.com/onlinepresence` (same as `-server`) |
+| `ONLINEPRESENCE_TOKEN` | Personal token for the hosted instance, sent as `Authorization: Bearer` |
+
+It honours `HTTPS_PROXY`. This replaces the old Python `onlinePresence-cli`;
+MX and name-server records are not reported (use `dig MX` / `dig NS`).
 
 ## MCP tools
 
@@ -130,7 +151,8 @@ go vet ./...
 go test -race ./...     # tests use fake lookups, no network needed
 ```
 
-The code is one package, `cmd/onlinepresence-server/`:
+The server is one package, `cmd/onlinepresence-server/`; the CLI is
+`cmd/onlinepresence/` (stdlib only, one file):
 
 | File | What |
 |---|---|

@@ -1,4 +1,4 @@
-module github.com/baldwinsung/onlinePresence-app
+module github.com/baldwinsung/online-presence
 
 go 1.26.0
 

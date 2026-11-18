@@ -1,8 +1,9 @@
-# onlinePresence-app
+# online-presence
 
 **Public GitHub repo.** One Go binary that looks up a domain's registration,
 hosting provider and TLS certificate, served as an MCP server (stdio and
-Streamable HTTP) and as a REST API. README.md is the user-facing reference.
+Streamable HTTP) and as a REST API, plus `cmd/onlinepresence`, a thin CLI
+that calls a server's `online_presence` tool (no lookups of its own). README.md is the user-facing reference.
 
 ## Rules
 
@@ -28,7 +29,7 @@ Streamable HTTP) and as a REST API. README.md is the user-facing reference.
 
 ```bash
 go vet ./... && go test -race ./...
-go build -o bin/onlinepresence-server ./cmd/onlinepresence-server
+go build -o bin/ ./cmd/...
 ```
 
 After changing the code, rebuild and re-install any local MCP copy:
