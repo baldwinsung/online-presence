@@ -63,6 +63,7 @@ type lookups struct {
 	whois    func(ctx context.Context, domain string) (whoisparser.WhoisInfo, error)
 	resolveA func(ctx context.Context, domain string) ([]net.IP, error)
 	rdapName func(ctx context.Context, ip net.IP) (string, error)
+	rdapIP   func(ctx context.Context, ip net.IP) ([]byte, error)
 	cert     func(ctx context.Context, domain string) (*x509.Certificate, error)
 }
 
@@ -95,6 +96,7 @@ func liveLookups() lookups {
 			return net.DefaultResolver.LookupIP(ctx, "ip4", domain)
 		},
 		rdapName: rdapFirstEntityName,
+		rdapIP:   rdapIPRaw,
 		cert: func(ctx context.Context, domain string) (*x509.Certificate, error) {
 			domain, err := validDomain(domain)
 			if err != nil {

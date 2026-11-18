@@ -1,9 +1,11 @@
 // Command onlinepresence is a thin command-line client for onlinepresence-server.
-// It makes one MCP call (online_presence) over Streamable HTTP and prints the
+// It makes one MCP call (online_presence, or ip_info for IP addresses) over
+// Streamable HTTP and prints the
 // report. All lookups happen on the server; the client does no DNS, WHOIS or
 // TLS work of its own.
 //
 //	onlinepresence example.com
+//	onlinepresence 8.8.8.8 1.1.1.1      # IP holder + abuse contacts (ip_info)
 //	onlinepresence -json example.com
 //	onlinepresence -server http://127.0.0.1:8090/ example.com
 //
@@ -19,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -32,24 +35,38 @@ func main() {
 	asJSON := flag.Bool("json", false, "print the raw JSON report")
 	timeout := flag.Duration("timeout", 60*time.Second, "overall timeout")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: onlinepresence [flags] <domain>\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: onlinepresence [flags] <domain>\n       onlinepresence [flags] <ip> [ip...]\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	if flag.NArg() != 1 {
+	if flag.NArg() == 0 {
+		flag.Usage()
+		os.Exit(2)
+	}
+	tool, args := "online_presence", map[string]any{"domain": flag.Arg(0)}
+	if net.ParseIP(flag.Arg(0)) != nil {
+		tool, args = "ip_info", map[string]any{"ip": strings.Join(flag.Args(), ",")}
+	} else if flag.NArg() != 1 {
 		flag.Usage()
 		os.Exit(2)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	raw, err := call(ctx, http.DefaultClient, *server, os.Getenv("ONLINEPRESENCE_TOKEN"), flag.Arg(0))
+	raw, err := call(ctx, http.DefaultClient, *server, os.Getenv("ONLINEPRESENCE_TOKEN"), tool, args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "onlinepresence:", err)
 		os.Exit(1)
 	}
 	if *asJSON {
 		os.Stdout.Write(append(raw, '\n'))
+		return
+	}
+	if tool == "ip_info" {
+		if err := renderIPs(os.Stdout, raw); err != nil {
+			fmt.Fprintln(os.Stderr, "onlinepresence: unexpected report:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	var r report
@@ -67,11 +84,11 @@ func envOr(k, def string) string {
 	return def
 }
 
-// call runs tools/call online_presence and returns the tool's JSON text.
-func call(ctx context.Context, c *http.Client, server, token, domain string) ([]byte, error) {
+// call runs tools/call for tool and returns the tool's JSON text.
+func call(ctx context.Context, c *http.Client, server, token, tool string, args map[string]any) ([]byte, error) {
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "online_presence", "arguments": map[string]any{"domain": domain}},
+		"params": map[string]any{"name": tool, "arguments": args},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server, bytes.NewReader(body))
 	if err != nil {
@@ -197,4 +214,72 @@ func render(w io.Writer, r report) {
 			fmt.Fprintf(w, "%-18s %s\n", "", s)
 		}
 	}
+}
+
+type contact struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Phone string `json:"phone"`
+}
+
+type ipReport struct {
+	IP          string    `json:"ip"`
+	Error       string    `json:"error"`
+	Holder      string    `json:"holder"`
+	NetworkName string    `json:"network_name"`
+	CIDR        []string  `json:"cidr"`
+	Range       string    `json:"range"`
+	Country     string    `json:"country"`
+	Abuse       []contact `json:"abuse"`
+	NOC         []contact `json:"noc"`
+	Technical   []contact `json:"technical"`
+}
+
+// renderIPs prints ip_info's result: one object, or {"results": [...]}.
+func renderIPs(w io.Writer, raw []byte) error {
+	var many struct {
+		Results []ipReport `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return err
+	}
+	if many.Results == nil {
+		var one ipReport
+		if err := json.Unmarshal(raw, &one); err != nil {
+			return err
+		}
+		many.Results = []ipReport{one}
+	}
+	row := func(k, v string) {
+		if v == "" {
+			v = "-"
+		}
+		fmt.Fprintf(w, "%-18s %s\n", k+":", v)
+	}
+	for _, r := range many.Results {
+		fmt.Fprintf(w, "\n%s\n%s\n", r.IP, strings.Repeat("-", len(r.IP)))
+		if r.Error != "" {
+			row("Error", r.Error)
+			continue
+		}
+		row("Holder", r.Holder)
+		row("Network", r.NetworkName)
+		row("CIDR", strings.Join(r.CIDR, ", "))
+		row("Country", strings.ToUpper(r.Country))
+		for _, g := range []struct {
+			label string
+			cs    []contact
+		}{{"Abuse", r.Abuse}, {"NOC", r.NOC}, {"Technical", r.Technical}} {
+			for _, c := range g.cs {
+				parts := []string{}
+				for _, p := range []string{c.Name, c.Email, c.Phone} {
+					if p != "" {
+						parts = append(parts, p)
+					}
+				}
+				row(g.label, strings.Join(parts, "  "))
+			}
+		}
+	}
+	return nil
 }

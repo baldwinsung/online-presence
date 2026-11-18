@@ -1,7 +1,8 @@
 # onlinePresence
 
 Look up the online presence of a domain: **who registered it, who hosts it, and
-what TLS certificate it serves**. One small Go binary (no database, no state)
+what TLS certificate it serves**, and who holds an IP address and how to reach
+their abuse desk. One small Go binary (no database, no state)
 that offers the same lookups three ways, plus a thin command-line client:
 
 | Mode | Command | For |
@@ -38,12 +39,14 @@ Go 1.26 or newer. The binary is static with `CGO_ENABLED=0`.
 
 ## Command line
 
-`onlinepresence` is a thin client: it makes one `online_presence` MCP call to a
-server and prints the report. It does no lookups itself.
+`onlinepresence` is a thin client: it makes one MCP call to a server
+(`online_presence` for a domain, `ip_info` for IP addresses) and prints the
+report. It does no lookups itself.
 
 ```bash
 onlinepresence google.com                                  # hosted instance
 onlinepresence -json google.com                            # raw JSON
+onlinepresence 8.8.8.8 1.1.1.1                             # IP holder + abuse contacts
 onlinepresence -server http://127.0.0.1:8090/ google.com   # your own serve-mcp
 ```
 
@@ -63,6 +66,7 @@ It honours `HTTPS_PROXY`. MX and name-server records are not reported (use
 | `domain_registration` | Registrar, created and expiry dates (RDAP, falling back to port-43 WHOIS) |
 | `hosting_provider` | The domain's A record and who holds that IP block (IP RDAP). Behind a CDN this is the CDN |
 | `ssl_certificate` | Subject, issuer, validity, days remaining and SANs of the certificate on port 443 (not validated, so expired or self-signed certificates are still reported) |
+| `ip_info` | Who holds an IP address (IPv4 or IPv6), from the regional registry's RDAP record: network name, CIDR, country, holder, and abuse, NOC and technical contacts. Up to 20 addresses per call |
 | `my_public_ip` | Local (stdio) and non-public HTTP: the server's own public egress IP. Public HTTP: the caller's IP, from `MCP_CALLER_IP_HEADER` (tool hidden if unset) |
 
 ### Local (stdio)
@@ -159,6 +163,7 @@ The server is one package, `cmd/onlinepresence-server/`; the CLI is
 | `main.go` | Commands, REST API, the `lookups` interface tests fake |
 | `egress.go` | RDAP domain lookups, proxy-aware TLS dial |
 | `mcp.go` | MCP tools and JSON-RPC dispatch (no SDK), stdio transport |
+| `ipinfo.go` | `ip_info`: IP RDAP record, contacts, bulk lookups |
 | `mcphttp.go` | Streamable HTTP transport, result cache, public-mode address guard |
 
 ## Credits

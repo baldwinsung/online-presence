@@ -1,9 +1,10 @@
 # online-presence
 
 **Public GitHub repo.** One Go binary that looks up a domain's registration,
-hosting provider and TLS certificate, served as an MCP server (stdio and
+hosting provider and TLS certificate (and an IP address's holder and abuse
+contacts), served as an MCP server (stdio and
 Streamable HTTP) and as a REST API, plus `cmd/onlinepresence`, a thin CLI
-that calls a server's `online_presence` tool (no lookups of its own). README.md is the user-facing reference.
+that calls a server's `online_presence` / `ip_info` tools (no lookups of its own). README.md is the user-facing reference.
 
 ## Rules
 

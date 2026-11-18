@@ -203,6 +203,22 @@ func mcpTools(l lookups) []mcpTool {
 			},
 		},
 		{
+			Name: "ip_info", Title: "IP address info",
+			Description: "Who holds an IP address (IPv4 or IPv6) and how to reach them, from the regional registry's RDAP record: network name, range/CIDR, country, holder, and abuse, NOC and technical contacts (name, email, phone). Pass one address or up to 20 separated by commas, spaces or newlines.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ip": map[string]any{"type": "string", "description": "One IP address, or several separated by commas, spaces or newlines (max 20)"},
+				},
+				"required": []string{"ip"},
+			},
+			Annotations: readOnly,
+			run: func(ctx context.Context, a map[string]any) (any, error) {
+				s, _ := a["ip"].(string)
+				return ipInfo(ctx, l, s)
+			},
+		},
+		{
 			Name: "my_public_ip", Title: "My public IP",
 			Description: "The public IP address this MCP server's outbound traffic appears from, as seen by myip.baldwinsung.com. Behind a forward proxy this is the proxy's egress IP, not the local network's.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},

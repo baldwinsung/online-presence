@@ -48,7 +48,7 @@ func TestCallAndRender(t *testing.T) {
 	})
 	defer srv.Close()
 
-	raw, err := call(context.Background(), srv.Client(), srv.URL, "tok", "example.com")
+	raw, err := call(context.Background(), srv.Client(), srv.URL, "tok", "online_presence", map[string]any{"domain": "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +68,25 @@ func TestCallAndRender(t *testing.T) {
 func TestToolError(t *testing.T) {
 	srv := fakeServer(t, textResult(map[string]string{"error": "free calls used up"}, true), nil)
 	defer srv.Close()
-	_, err := call(context.Background(), srv.Client(), srv.URL, "", "example.com")
+	_, err := call(context.Background(), srv.Client(), srv.URL, "", "online_presence", map[string]any{"domain": "example.com"})
 	if err == nil || err.Error() != "free calls used up" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRenderIPs(t *testing.T) {
+	raw := `{"results":[{"ip":"8.8.8.8","holder":"Google LLC","cidr":["8.8.8.0/24"],"abuse":[{"name":"Abuse","email":"network-abuse@google.com"}]},{"ip":"192.0.2.9","error":"404"}]}`
+	var out bytes.Buffer
+	if err := renderIPs(&out, []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Google LLC", "8.8.8.0/24", "network-abuse@google.com", "192.0.2.9", "404"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q:\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if err := renderIPs(&out, []byte(`{"ip":"1.1.1.1","holder":"APNIC"}`)); err != nil || !strings.Contains(out.String(), "APNIC") {
+		t.Errorf("single result: %v\n%s", err, out.String())
 	}
 }

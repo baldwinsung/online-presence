@@ -36,6 +36,12 @@ func fakeLookups() lookups {
 			return []net.IP{net.ParseIP("142.250.80.46")}, nil
 		},
 		rdapName: func(context.Context, net.IP) (string, error) { return "Google LLC", nil },
+		rdapIP: func(_ context.Context, ip net.IP) ([]byte, error) {
+			if ip.String() == "192.0.2.9" {
+				return nil, errors.New("rdap 192.0.2.9: 404 Not Found")
+			}
+			return []byte(rdapIPFixture), nil
+		},
 		cert: func(_ context.Context, d string) (*x509.Certificate, error) {
 			if d == "down.example" {
 				return nil, errors.New("dial tcp: connection refused")
