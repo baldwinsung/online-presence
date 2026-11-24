@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Latest 1.26 patch release: go.mod's "go 1.26.0" is the minimum,
           # and govulncheck fails on an old patch's standard library.
