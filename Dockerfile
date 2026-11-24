@@ -3,7 +3,7 @@
 #   docker run --rm -p 8080:8080 onlinepresence                 # REST API
 #   docker run --rm -p 8090:8090 -e MCP_LISTEN_ADDR=0.0.0.0:8090 \
 #     onlinepresence serve-mcp                                  # MCP over HTTP
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
